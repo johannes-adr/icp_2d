@@ -27,11 +27,12 @@ To use the ICP algorithm in your project:
 
 1. Implement the `ICPPoint` trait for your point type.
 2. Create instances of `Icp` with reference and other point sets.
-3. Use the `do_icp` or `do_icp_once` method to align point sets.
+3. Use the `do_icp` method to align point sets.
+4. Check if the convergence value is "good enough"
 
 ## Example
 
-![Lidar Example Image](https://raw.githubusercontent.com/johannes-adr/icp_2d/master/LidarTest.svg)  
+![Lidar Example Image](https://raw.githubusercontent.com/johannes-adr/icp_2d/master/assets/LidarTest.svg)  
 <sup>lib.rs/tests</sub>
 
 Here's a basic example of how to use the library:
@@ -40,17 +41,34 @@ Here's a basic example of how to use the library:
 use icp_2d::{Icp, ICPPoint};
 use nalgebra as na;
 
-// ICPPoint is for na::Point2<f32> implemented
-//
+// `ICPPoint` is for `na::Point2<f32>` implemented
 
-// Usage
-let ref_points = vec![na::Point2::new(1.0, 2.0), na::Point2::new(3.0, 4.0)];
-let other_points = vec![na::Point2::new(5.0, 6.0), na::Point2::new(7.0, 8.0)];
+fn main() {
+    // Define two sets of points (scan1 and scan2)
+    let scan1 = vec![
+        na::Point2::new(1.0, 2.0),
+        na::Point2::new(3.0, 4.0),
+        // ... more points
+    ];
 
-let mut icp = Icp::new(&ref_points, other_points, 50, 0.005, 0.1);
-let (x, y, angle) = icp.do_icp(0.0, 0.0, 0.0);
+    let scan2 = vec![
+        na::Point2::new(5.0, 6.0),
+        na::Point2::new(7.0, 8.0),
+        // ... more points
+    ];
 
-println!("Alignment: Translation ({}, {}), Rotation {}", x, y, angle);
+    // Create an Icp instance with default parameters
+    let mut icp = Icp::new_default(&scan1, scan2);
+
+    // Perform the ICP alignment
+    let (ICPResult { x_offset, y_offset, rotation_offset_rad, convergence }, aligned_scan) = icp.do_icp(0.0, 0.0, 0.0);
+
+    println!("Alignment Results:");
+    println!("X Offset: {}", x_offset);
+    println!("Y Offset: {}", y_offset);
+    println!("Rotation Offset (rad): {}", rotation_offset_rad);
+    println!("Convergence: {}%", convergence * 100.0);
+}
 ```
 
 ## Tip
@@ -58,8 +76,8 @@ println!("Alignment: Translation ({}, {}), Rotation {}", x, y, angle);
 
 If your application involves a custom point type solely within the reference points collection (and not in the other points), 
 implementing the ICPPoint interface can be more streamlined. In such cases, it's not necessary to implement the translate and rotate methods,
- as the reference point cloud remains stationary.
-  This approach simplifies the implementation process, focusing only on the essential functionalities required for stationary reference points in the ICP algorithm.
+as the reference point cloud remains stationary.
+This approach simplifies the implementation process, focusing only on the essential functionalities required for stationary reference points in the ICP algorithm.
 
 ## Contributing
 

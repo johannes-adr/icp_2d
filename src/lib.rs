@@ -2,11 +2,20 @@ mod icp_collection;
 use icp_collection::{ICPCollection, ICPCol, KDTreedIcpCollection};
 
 mod icp_point;
+use na::ComplexField;
 use nalgebra as na;
 
 
 pub use icp_point::ICPPoint;
 
+
+pub struct ICPResult{
+    pub x_offset: f32,
+    pub y_offset: f32,
+    pub rotation_offset_rad: f32,
+    ///Value between 0.0 and 1.0
+    pub convergence: f32
+}
 
 
 pub struct Icp<'a,TRef: ICPPoint, TOther: ICPPoint> {
@@ -14,37 +23,31 @@ pub struct Icp<'a,TRef: ICPPoint, TOther: ICPPoint> {
     points_other: ICPCollection<TOther>,
     max_iterations: usize,
     convergence_distance: f32,
-    convergence_rotation: f32
+    convergence_rotation: f32,
+    convergence_points_maxdist: f32,
 }
 
 impl<'a,TRef: ICPPoint, TOther: ICPPoint> Icp<'a,TRef,TOther> {
     pub fn new(scan1: &'a [TRef], scan2: Vec<TOther>,    max_iterations: usize,
         convergence_distance: f32,
-        convergence_rotation: f32) -> Self {
-        Self { points_reference: KDTreedIcpCollection::new(scan1), points_other: ICPCollection::new(scan2),max_iterations,convergence_distance,convergence_rotation }
+        convergence_rotation: f32, convergence_points_maxdist: f32) -> Self {
+        Self { points_reference: KDTreedIcpCollection::new(scan1), points_other: ICPCollection::new(scan2),max_iterations,convergence_distance,convergence_rotation, convergence_points_maxdist }
     }
 
     /// Converges at max 0.5cm and 0.1 degrees
     pub fn new_default(scan1: &'a [TRef], scan2: Vec<TOther>) -> Self {
-        Self::new(scan1,scan2,50,0.005,0.1f32.to_radians())
+        Self::new(scan1,scan2,50,0.005,0.1f32.to_radians(),0.01)
     }
 
     ///x,y in Meters, angle_rad in radians
-    pub fn do_icp(&mut self, x: f32, y: f32, angle_rad: f32) -> (f32, f32, f32) {
-        let scan2orig = self.points_other.clone();
+    pub fn do_icp(mut self, x: f32, y: f32, angle_rad: f32) -> (ICPResult, Vec<TOther>) {
         let res = self.do_icp_generic(x, y, angle_rad, Self::center_of_mass_corresp_kd_with_svd);
-        self.points_other = scan2orig;
-        res
-    }
 
-    ///x,y in Meters, angle_rad in radians
-    pub fn do_icp_once(mut self, x: f32, y: f32, angle_rad: f32) -> (f32, f32, f32) {
-        self.do_icp_generic(x, y, angle_rad, Self::center_of_mass_corresp_kd_with_svd)
+        (res,self.points_other.inner())
     }
 
 
-
-    fn do_icp_generic(&mut self, x: f32, y: f32, angle_rad: f32, transformation_fn: fn(&mut KDTreedIcpCollection<TRef>, &mut ICPCollection<TOther>) -> (na::Vector2<f32>, f32)) -> (f32, f32, f32) {
+    fn do_icp_generic(&mut self, x: f32, y: f32, angle_rad: f32, transformation_fn: fn(&mut KDTreedIcpCollection<TRef>, &mut ICPCollection<TOther>) -> (na::Vector2<f32>, f32)) -> ICPResult {
         let mut total_translation = na::Vector2::new(x, y);
         let mut total_rotation = angle_rad;
     
@@ -71,8 +74,17 @@ impl<'a,TRef: ICPPoint, TOther: ICPPoint> Icp<'a,TRef,TOther> {
                 break;
             }
         }
+        let mut converged_count = 0;
+        for pt in self.points_other.get_points(){
+            let pt = pt.point();
+            let closest = self.points_reference.closest_point_kd(pt);
+
+            if (pt.x - closest.x).abs() < self.convergence_points_maxdist && (pt.y - closest.y).abs() < self.convergence_points_maxdist{
+                converged_count+=1;
+            }
+        }
     
-        (total_translation.x, total_translation.y, total_rotation)
+        ICPResult{x_offset: total_translation.x, y_offset: total_translation.y, rotation_offset_rad: total_rotation, convergence: converged_count as f32 / self.points_other.get_points().len() as f32 }
     }
 
 
@@ -120,7 +132,7 @@ impl<'a,TRef: ICPPoint, TOther: ICPPoint> Icp<'a,TRef,TOther> {
 
 
     #[cfg(test)]
-    fn do_icp_once_test(mut self, x: f32, y: f32, angle: f32) -> ((f32, f32, f32),ICPCollection<TOther>) {
+    fn do_icp_once_test(mut self, x: f32, y: f32, angle: f32) -> (ICPResult,ICPCollection<TOther>) {
         (self.do_icp_generic(x, y, angle, Self::center_of_mass_corresp_kd_with_svd),self.points_other)
     }
 }
@@ -131,29 +143,71 @@ mod test{
     use std::{fs, ops::Sub};
 
     use super::*;
+    use na::{Rotation2, Point2};
     use plotters::prelude::*;
     type Scan = Vec<na::Point2<f32>>;
     #[test]
-    fn test_converge(){
+    fn test_realworld(){
         parse_and_plot("LidarTest", |a,b|{
             let icp = Icp::new_default(a, b.clone());
-            let ((x,y,rot),b_aligned) = icp.do_icp_once_test(0.0, 0.0, 0.0);
-            // println!("x:{x}, y:{y}, rot:{}deg",rot.to_degrees());
-            assert!(-0.15f32.sub(x).abs() < 0.01);
-            assert!(0.0f32.sub(y).abs() < 0.01);
-            assert!(-1.77f32.to_radians().sub(rot).abs() < 1.0f32.to_radians());
+            let (ICPResult { x_offset, y_offset, rotation_offset_rad, convergence },b_aligned) = icp.do_icp_once_test(0.0, 0.0, 0.0);
+            println!("{}",convergence);
+            assert!(-0.15f32.sub(x_offset).abs() < 0.01);
+            assert!(0.0f32.sub(y_offset).abs() < 0.01);
+            assert!(-1.77f32.to_radians().sub(rotation_offset_rad).abs() < 1.0f32.to_radians());
+            // assert!(did_converge > 0.8);
             *b = b_aligned.inner();
-            [x,y,rot]
+            [x_offset,y_offset,rotation_offset_rad,convergence]
         });
     }
 
-    fn parse_and_plot(name: &str, func: impl Fn(&mut Scan, &mut Scan)->[f32;3]) {
-        let mut scan1 = parse_scan("./scan1.txt");
-        let mut scan2 = parse_scan("./scan2.txt");
+
+    #[test]
+    fn test_effectiveness(){
+        let scan1 = parse_scan("./assets/scan1.txt");
+
+        let tests = [
+            (-0.5,-0.5,60.0,"Meter5")
+        ];
+
+        for (x,y,rot,name) in tests{
+            do_test(&scan1, &scan1, x, y, rot,name);
+
+        }
+    }
+
+    /****
+     * =======
+     * Utils
+     * =======
+     ****/
+
+    fn do_test(reference: &[na::Point2<f32>], scan2: &[na::Point2<f32>], x: f32,y:f32,rots_degree: f32, name: &str){
+        let mut scan2 = scan2.iter().cloned().collect::<Vec<_>>();
+        translate(&mut scan2, x, y);
+        rotate(&mut scan2, rots_degree.to_radians());
+
+        let (res,other) = Icp::new_default(reference, scan2.clone()).do_icp_once_test(0.0, 0.0, 0.0);
+        plot(reference,&other.inner(),&scan2,[x,y,rots_degree.to_radians(),res.convergence],format!("./assets/{name}.svg")).unwrap();
+        println!("{}",res.convergence);
+    }
+
+    fn rotate(v: &mut [na::Point2<f32>],rads: f32){
+        let rot = Rotation2::new(rads);
+        v.iter_mut().for_each(|p|*p = rot * *p);
+    }
+
+    fn translate(v: &mut [na::Point2<f32>],x: f32, y: f32){
+        v.iter_mut().for_each(|p|*p = Point2::new(p.x+x,p.y+y));
+    }
+
+    fn parse_and_plot(name: &str, func: impl Fn(&mut Scan, &mut Scan)->[f32;4]) {
+        let mut scan1 = parse_scan("./assets/scan1.txt");
+        let mut scan2 = parse_scan("./assets/scan2.txt");
         let scan2_orig = scan2.clone();      
         
         let res = func(&mut scan1, &mut scan2);
-        plot(&scan1, &scan2, &scan2_orig, res, format!("{name}.svg")).unwrap();
+        plot(&scan1, &scan2, &scan2_orig, res, format!("./assets/{name}.svg")).unwrap();
     }
 
     pub fn parse_scan(name: &str) -> Scan {
@@ -173,10 +227,10 @@ mod test{
         points1: &[na::Point2<f32>],
         points2: &[na::Point2<f32>],
         points2_orig: &[na::Point2<f32>],
-        translation: [f32;3],
+        translation: [f32;4],
         name: String,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let [x, y, rot] = translation;
+        let [x, y, rot,convergence] = translation;
     
         let root = SVGBackend::new(&name, (720, 720)).into_drawing_area();
         root.fill(&WHITE)?;
@@ -209,7 +263,7 @@ mod test{
         // Add translation information as a label
 
         lower.draw_text(
-            &format!("Translation: x={:.2}cm, y={:.2}cm, rot={:.2}deg", x * 100.0, y * 100.0, rot.to_degrees()),
+            &format!("Translation: x={:.2}cm, y={:.2}cm, rot={:.2}deg, convergence: {:.2}%", x * 100.0, y * 100.0, rot.to_degrees(), convergence * 100.0),
             &("sans-serif", 20, &BLACK).into_text_style(&lower),
             (50, 5),
         )?;
