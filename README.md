@@ -4,6 +4,7 @@
 
 This library provides a Rust implementation of the Iterative Closest Point (ICP) algorithm, commonly used in computer vision and robotics for aligning 2D shapes. It's built for high performance and flexibility, leveraging Rust's strong typing and efficient memory management.
 Example use case: Measuring distance and rotation between two lidar-scans.
+
 ## Features
 
 - **Efficient Point Matching**: Utilizes KD-Trees for efficient nearest neighbor search.
@@ -17,7 +18,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-your_icp_crate_name = "0.1.0"
+icp_2d = {git = "https://github.com/johannes-adr/icp_2d.git"}
 ```
 
 ## Usage
@@ -29,6 +30,9 @@ To use the ICP algorithm in your project:
 3. Use the `do_icp` or `do_icp_once` method to align point sets.
 
 ## Example
+
+![Lidar Example Image](https://raw.githubusercontent.com/johannes-adr/icp_2d/master/LidarTest.svg)  
+<sup>lib.rs/tests</sub>
 
 Here's a basic example of how to use the library:
 
